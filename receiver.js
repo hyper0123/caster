@@ -1,4 +1,3 @@
-// Asegurarse de que el DOM esté completamente cargado
 document.addEventListener('DOMContentLoaded', () => {
   try {
     const context = cast.framework.CastReceiverContext.getInstance();
@@ -10,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Función para mostrar errores
     function showError(message) {
-      console.error('ERROR VISIBLE:', message);
+      console.error('ERROR:', message);
       if (errorDisplay) {
         errorDisplay.textContent = `ERROR: ${message}`;
         errorDisplay.style.display = 'block';
@@ -19,81 +18,55 @@ document.addEventListener('DOMContentLoaded', () => {
       if (loadingOverlay) loadingOverlay.style.display = 'none';
     }
 
-    function hideError() {
-      if (errorDisplay) errorDisplay.style.display = 'none';
-    }
-
-    // Verificar compatibilidad básica
+    // 1. Verificar que Cast Framework está cargado
     if (!window.cast || !window.cast.framework) {
-      showError('Error: Cast Framework no cargado');
+      showError('Cast Framework no está cargado');
       return;
     }
 
-    if (!shaka || !shaka.Player) {
-      showError('Error: Shaka Player no cargado');
+    // 2. Verificar que Shaka Player está cargado
+    if (!window.shaka) {
+      showError('Shaka Player no está cargado');
       return;
     }
 
-    statusElement.innerText = 'Verificando compatibilidad...';
+    // 3. Usar versión compatible de Shaka
+    const shakaPlayer = new shaka.Player(videoElement);
+    
+    // Solución para setLevel
+    if (shaka.log && shaka.log.setLevel) {
+      shaka.log.setLevel(shaka.log.Level.DEBUG);
+    } else {
+      console.warn('shaka.log.setLevel no disponible');
+    }
 
-    // Verificar compatibilidad con Shaka Player
-    if (!shaka.Player.isBrowserSupported()) {
-      showError('Shaka Player no compatible con este navegador');
-      return;
+    // Configuración segura
+    try {
+      shakaPlayer.configure({
+        streaming: {
+          forceTransmuxTS: true,
+          retryParameters: {
+            maxAttempts: 5,
+            baseDelay: 1000,
+            backoffFactor: 2
+          }
+        }
+      });
+    } catch (configError) {
+      showError(`Config Shaka: ${configError.message}`);
     }
 
     // Opciones del receptor
     const options = new cast.framework.CastReceiverOptions();
     options.disableIdleTimeout = true;
     options.maxInactivity = 3600;
-    options.useShakaForHls = true;
-    options.shakaVersion = '4.15.9';
     options.playbackConfig = new cast.framework.PlaybackConfig();
 
-    // Inicializar Shaka Player
-    let shakaPlayer;
-    try {
-      shakaPlayer = new shaka.Player(videoElement);
-      statusElement.innerText = 'Shaka Player inicializado';
-    } catch (error) {
-      showError(`Error al crear Shaka Player: ${error.message}`);
-      return;
-    }
+    // Usar versión de Shaka compatible con el framework
+    options.useShakaForHls = true;
+    options.shakaVersion = '4.7.10';  // Coincide con la versión cargada
 
-    // Configuración de Shaka
-    try {
-      shaka.log.setLevel(shaka.log.Level.DEBUG);
-      
-      shakaPlayer.configure({
-        streaming: {
-          forceTransmuxTS: true,
-          failureCallback: (error) => {
-            showError(`Error transmuxing: ${error.message}`);
-          },
-          retryParameters: {
-            maxAttempts: 5,
-            baseDelay: 1000,
-            backoffFactor: 2,
-            fuzzFactor: 0.5
-          }
-        },
-        manifest: {
-          dash: { ignoreMinBufferTime: true },
-          retryParameters: { maxAttempts: 5 }
-        }
-      });
-    } catch (error) {
-      showError(`Error configurando Shaka: ${error.message}`);
-      return;
-    }
-
-    // Manejo de errores de Shaka Player
-    shakaPlayer.addEventListener('error', (event) => {
-      const error = event.detail;
-      showError(`Shaka Error ${error.code}: ${error.message}`);
-    });
-
-    // Manejo de redirecciones
+    // Manejo de redirecciones simplificado
     shakaPlayer.getNetworkingEngine().registerResponseFilter(async (type, response) => {
       if (response.status >= 300 && response.status < 400 && response.headers['location']) {
         try {
@@ -102,17 +75,12 @@ document.addEventListener('DOMContentLoaded', () => {
           
           const newRequest = {
             ...response.request,
-            uris: [newUrl],
-            headers: { ...response.request.headers }
+            uris: [newUrl]
           };
           
-          delete newRequest.headers['range'];
-          
-          const newResponse = await shakaPlayer.getNetworkingEngine().request(type, newRequest);
-          return newResponse;
+          return shakaPlayer.getNetworkingEngine().request(type, newRequest);
         } catch (error) {
-          showError(`Error en redirección: ${error.message}`);
-          throw error;
+          showError(`Redirección fallida: ${error.message}`);
         }
       }
       return response;
@@ -120,41 +88,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const fallbackURL = 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
-    // Interceptar LOAD
     playerManager.setMessageInterceptor(
       cast.framework.messages.MessageType.LOAD,
       loadRequestData => {
-        hideError();
-        statusElement.innerText = 'Procesando solicitud...';
+        loadingOverlay.style.display = 'none';
+        statusElement.innerText = 'Procesando contenido...';
         
-        if (!loadRequestData.media) {
-          showError('Media no definida en la solicitud');
+        const media = loadRequestData.media;
+        if (!media) {
+          showError('Solicitud sin contenido');
           return new cast.framework.messages.ErrorData(
             cast.framework.messages.ErrorType.LOAD_FAILED
           );
         }
         
-        const media = loadRequestData.media;
-        
-        // Manejo de customData
         if (media.customData) {
           const cd = media.customData;
-          if (cd.url) media.contentUrl = cd.url;
-          else if (cd.contentUrl) media.contentUrl = cd.contentUrl;
-          if (cd.contentType) media.contentType = cd.contentType;
+          media.contentUrl = cd.url || cd.contentUrl || media.contentUrl;
+          media.contentType = cd.contentType || media.contentType;
         }
         
-        // Fallback si falta URL
         if (!media.contentUrl) {
           media.contentUrl = fallbackURL;
           media.contentType = 'video/mp4';
-          statusElement.innerText = 'Usando contenido por defecto';
-        }
-        
-        // Verificar compatibilidad
-        if (media.contentType === 'application/x-mpegURL' && 
-            !shaka.Player.isTypeSupported('application/vnd.apple.mpegurl')) {
-          showError('HLS no soportado en este dispositivo');
         }
         
         statusElement.innerText = `Cargando: ${media.contentUrl.substring(0, 50)}...`;
@@ -162,7 +118,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     );
 
-    // Configurar DRM y headers
     playerManager.setMediaPlaybackInfoHandler((loadReq, playbackConfig) => {
       const cd = loadReq.media.customData || {};
       
@@ -174,33 +129,44 @@ document.addEventListener('DOMContentLoaded', () => {
             : cast.framework.ContentProtection.WIDEVINE;
       }
       
-      const setRequestHandler = (handlerType, headers) => {
-        playbackConfig[`${handlerType}RequestHandler`] = req => {
-          req.headers = {
-            ...req.headers,
-            ...headers,
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-          };
+      // Headers dinámicos
+      const addHeaders = (req, headers) => {
+        req.headers = {
+          ...req.headers,
+          ...headers,
+          'User-Agent': 'Mozilla/5.0 (Chromecast)'
         };
       };
       
-      if (cd.licenseHeaders) setRequestHandler('license', cd.licenseHeaders);
-      if (cd.manifestHeaders) setRequestHandler('manifest', cd.manifestHeaders);
-      if (cd.segmentHeaders) setRequestHandler('segment', cd.segmentHeaders);
+      if (cd.licenseHeaders) {
+        playbackConfig.licenseRequestHandler = req => {
+          addHeaders(req, cd.licenseHeaders);
+          return req;
+        };
+      }
+      
+      if (cd.manifestHeaders) {
+        playbackConfig.manifestRequestHandler = req => {
+          addHeaders(req, cd.manifestHeaders);
+        };
+      }
+      
+      if (cd.segmentHeaders) {
+        playbackConfig.segmentRequestHandler = req => {
+          addHeaders(req, cd.segmentHeaders);
+        };
+      }
       
       return playbackConfig;
     });
 
-    // Estado en pantalla
+    // Eventos de estado
     playerManager.addEventListener(
       cast.framework.events.EventType.MEDIA_STATUS,
       evt => {
-        if (loadingOverlay) loadingOverlay.style.display = 'none';
         if (evt.mediaStatus.playerState === 'PLAYING') {
           statusElement.innerText = 'Reproduciendo';
-          hideError();
-        } else if (evt.mediaStatus.playerState === 'BUFFERING') {
-          statusElement.innerText = 'Buffering...';
+          errorDisplay.style.display = 'none';
         }
       }
     );
@@ -208,33 +174,27 @@ document.addEventListener('DOMContentLoaded', () => {
     playerManager.addEventListener(
       cast.framework.events.EventType.ERROR,
       event => {
-        const error = event.error || event.detailedError || 'Error desconocido';
-        showError(`Error del receptor: ${error}`);
+        showError(`Error del sistema: ${event.detailedError || event.error}`);
       }
     );
 
     // Iniciar receptor
-    try {
-      context.start(options);
-      statusElement.innerText = 'Receptor listo. Esperando contenido...';
-      if (loadingOverlay) loadingOverlay.style.display = 'none';
-    } catch (error) {
-      showError(`Error al iniciar receptor: ${error.message}`);
-    }
-
-    // Verificar si todo está listo después de 5 segundos
+    context.start(options);
+    statusElement.innerText = 'Receptor listo';
+    loadingOverlay.style.display = 'none';
+    
+    // Verificador de estado
     setTimeout(() => {
-      if (loadingOverlay && loadingOverlay.style.display !== 'none') {
-        showError('El receptor no se inició correctamente');
+      if (loadingOverlay.style.display !== 'none') {
+        showError('Tiempo de espera agotado');
       }
     }, 5000);
     
-  } catch (error) {
-    const errorDisplay = document.getElementById('errorDisplay');
-    if (errorDisplay) {
-      errorDisplay.textContent = `ERROR FATAL: ${error.message}`;
-      errorDisplay.style.display = 'block';
-    }
-    console.error('Error fatal en receptor:', error);
+  } catch (globalError) {
+    const errorElement = document.getElementById('errorDisplay') || document.createElement('div');
+    errorElement.textContent = `FATAL: ${globalError.message}`;
+    errorElement.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;padding:20px;z-index:1000;';
+    document.body.appendChild(errorElement);
+    console.error('Error global:', globalError);
   }
 });
