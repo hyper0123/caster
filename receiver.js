@@ -1,105 +1,92 @@
-// receiver.js
-(() => {
-  const context       = cast.framework.CastReceiverContext.getInstance();
-  const playerManager = context.getPlayerManager();
-  const video         = document.getElementById('video');
-  const statusLabel   = document.getElementById('status');
+const context = cast.framework.CastReceiverContext.getInstance();
+const playerManager = context.getPlayerManager();
+const options = new cast.framework.CastReceiverOptions();
+// Opciones generales
+options.disableIdleTimeout = true;
+options.maxInactivity = 3600;
+// Habilitar Shaka para HLS (opcional)
+options.useShakaForHls = true;
+options.shakaVersion = '4.15.9';
+options.playbackConfig = new cast.framework.PlaybackConfig();
 
-  // Muestra mensajes breves
-  function showMessage(text, duration = 3000) {
-    statusLabel.textContent = text;
-    setTimeout(() => statusLabel.textContent = '', duration);
-  }
+// Video de demostración de respaldo
+const fallbackURL = 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
-  // Inicializa Shaka
-  const shakaPlayer = new shaka.Player(video);
-  shaka.log.setLevel(shaka.log.Level.V1);
-
-  // 1) ResponseFilter para seguir redirecciones 3xx (CORS-problemático)
-  shakaPlayer.getNetworkingEngine().registerResponseFilter((type, response) => {
-    if (response.status >= 300 && response.status < 400 && response.headers['location']) {
-      return fetch(response.headers['location'], {
-        method: response.request.method,
-        headers: response.request.headers,
-        body:    response.request.body
-      }).then(r => r);
+// Interceptar LOAD para usar customData y fallback
+playerManager.setMessageInterceptor(
+  cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
+    const media = loadRequestData.media;
+    if (!media) {
+      const error = new cast.framework.messages.ErrorData(
+        cast.framework.messages.ErrorType.LOAD_FAILED
+      );
+      error.reason = cast.framework.messages.ErrorReason.INVALID_PARAM;
+      return error;
     }
-  });
-
-  // 2) Fallback en caso de error de Shaka
-  shakaPlayer.addEventListener('error', evt => {
-    console.error('Shaka error:', evt.detail);
-    showMessage('Error de reproducción, cargando demo');
-    playFallback();
-  });
-  function playFallback() {
-    const demoUrl = 'https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd';
-    shakaPlayer.load(demoUrl)
-      .then(() => showMessage('Demo reproduciéndose'))
-      .catch(err => console.error('Fallback error:', err));
-  }
-
-  // 3) Interceptor LOAD para customData + headers + DRM + fallback
-  playerManager.setMessageInterceptor(
-    cast.framework.messages.MessageType.LOAD,
-    loadReq => {
-      try {
-        const media = loadReq.media;
-        if (!media) throw new Error('No media');
-
-        showMessage('Video recibido');
-        playerManager.setMediaElement(video);
-
-        // Extrae customData enviado desde la app Android
-        const extras = media.requestMetadata?.extras || {};
-        const data   = JSON.parse(extras.customData || '{}');
-        const { mediaUrl, headers = {}, licenseType, licenseKey } = data;
-
-        // 3.1) Inyecta headers en TODAS las peticiones (manifiesto, segmentos, licencia)
-        const ne = shakaPlayer.getNetworkingEngine();
-        ne.registerRequestFilter((type, request) => {
-          Object.entries(headers).forEach(([k,v]) => request.headers[k] = v);
-        });
-
-        // 3.2) Configura DRM
-        const drmConfig = {};
-        if (licenseType && licenseKey) {
-          if (licenseType.toLowerCase().includes('clearkey')) {
-            drmConfig.clearKeys = {};
-            if (licenseKey.trim().startsWith('{')) {
-              JSON.parse(licenseKey).keys.forEach(k => drmConfig.clearKeys[k.kid] = k.k);
-            } else {
-              const [kidHex,keyHex] = licenseKey.split(':');
-              const kidB64 = shaka.util.Uint8ArrayUtils.toBase64String(shaka.util.Hex.getBytes(kidHex));
-              const keyB64 = shaka.util.Uint8ArrayUtils.toBase64String(shaka.util.Hex.getBytes(keyHex));
-              drmConfig.clearKeys[kidB64] = keyB64;
-            }
-          } else {
-            drmConfig.servers = { 'com.widevine.alpha': licenseKey };
-          }
-        }
-        shakaPlayer.configure({ drm: drmConfig });
-
-        // 3.3) Carga y reproduce
-        if (!mediaUrl) throw new Error('mediaUrl missing');
-        shakaPlayer.load(mediaUrl)
-          .then(() => console.log('Reproduciendo', mediaUrl))
-          .catch(err => { console.error('Load failed', err); showMessage('Fallo, demo'); playFallback(); });
-      } catch (e) {
-        console.error('Interceptor error:', e);
-        showMessage('Datos inválidos, demo');
-        playFallback();
-      }
-      // Devuelve null para evitar UI nativa de CAF
-      return null;
+    if (media.customData) {
+      const cd = media.customData;
+      // Asignar URL y tipo desde customData (por ejemplo 'url' o 'contentUrl')
+      if (cd.url) media.contentUrl = cd.url;
+      else if (cd.contentUrl) media.contentUrl = cd.contentUrl;
+      if (cd.contentType) media.contentType = cd.contentType;
     }
-  );
+    // Lógica de fallback: si no hay URL válida, usar video de demostración
+    if (!media.contentUrl) {
+      media.contentUrl = fallbackURL;
+      media.contentType = 'video/mp4';
+    }
+    document.getElementById('status').innerText = 'Video recibido';
+    return loadRequestData;
+  }
+);
 
-  // 4) Nota CORS: los servidores de manifiesto y de licencia deben exponer:
-  //    Access-Control-Allow-Origin: *
-  //    Access-Control-Allow-Methods: GET, POST, OPTIONS
-  //    Access-Control-Allow-Headers: <los encabezados que uses>
+// Configurar DRM y cabeceras adicionales según customData
+playerManager.setMediaPlaybackInfoHandler((loadRequestData, playbackConfig) => {
+  const cd = loadRequestData.media.customData;
+  if (cd) {
+    if (cd.licenseUrl) {
+      playbackConfig.licenseUrl = cd.licenseUrl;
+      // Determinar tipo de DRM: Widevine o ClearKey
+      playbackConfig.protectionSystem = (
+        cd.licenseType === 'clearKey' ?
+        cast.framework.ContentProtection.CLEARKEY :
+        cast.framework.ContentProtection.WIDEVINE
+      );
+    }
+    if (cd.licenseHeaders) {
+      playbackConfig.licenseRequestHandler = (requestInfo) => {
+        requestInfo.headers = cd.licenseHeaders;
+        return requestInfo;
+      };
+    }
+    if (cd.manifestHeaders) {
+      playbackConfig.manifestRequestHandler = (requestInfo) => {
+        requestInfo.headers = cd.manifestHeaders;
+      };
+    }
+    if (cd.segmentHeaders) {
+      playbackConfig.segmentRequestHandler = (requestInfo) => {
+        requestInfo.headers = cd.segmentHeaders;
+      };
+    }
+  }
+  return playbackConfig;
+});
 
-  context.setTimeout(60000);  // Espera hasta 60s antes de desconectar
-  context.start();
-})();
+// Mostrar estados en pantalla
+playerManager.addEventListener(
+  cast.framework.events.EventType.MEDIA_STATUS, (event) => {
+    const state = event.mediaStatus.playerState;
+    if (state === 'PLAYING') {
+      document.getElementById('status').innerText = 'Reproduciendo';
+    }
+  }
+);
+playerManager.addEventListener(
+  cast.framework.events.EventType.ERROR, (event) => {
+    document.getElementById('status').innerText = 'Error de carga';
+  }
+);
+
+// Iniciar el contexto con las opciones configuradas
+context.start(options);
