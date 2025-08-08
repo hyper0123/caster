@@ -1,92 +1,22 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
   <meta charset="utf-8">
-  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.10/shaka-player.compiled.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receptor Chromecast + Shaka</title>
   <style>
-    body { 
-      margin:0; 
-      background:black; 
-      color:white; 
-      font-family:Arial, sans-serif; 
-      position: relative;
-    }
-    #status { 
-      position:absolute; 
-      top:10px; 
-      left:10px; 
-      z-index:10; 
-      background: rgba(0,0,0,0.7); 
-      padding: 10px;
-      border-radius: 5px;
-      max-width: 90%;
-      word-wrap: break-word;
-      font-size: 14px;
-    }
-    #errorDisplay {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(255, 0, 0, 0.85);
-      color: white;
-      padding: 20px;
-      border-radius: 10px;
-      text-align: center;
-      z-index: 100;
-      display: none;
-      max-width: 80%;
-      font-size: 1.2em;
-      border: 2px solid white;
-    }
-    video { 
-      width:100%; 
-      height:100%; 
-      background:black; 
-      position: relative;
-      z-index: 1;
-    }
-    .error-hidden {
-      display: none !important;
-    }
-    #loadingOverlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.8);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      z-index: 20;
-      font-size: 1.5em;
-      flex-direction: column;
-    }
-    #loadingSpinner {
-      border: 4px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      border-top: 4px solid #ffffff;
-      width: 40px;
-      height: 40px;
-      animation: spin 1s linear infinite;
-      margin-bottom: 15px;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
+    html, body { margin:0; padding:0; width:100%; height:100%; background:black; color:white; font-family:Arial, sans-serif; }
+    #status { position:absolute; top:10px; left:10px; z-index:1000; }
+    video { width:100%; height:100%; background:black; object-fit:contain; }
   </style>
+  <!-- CAF v3 -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- Shaka Player -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.9.2/shaka-player.compiled.js"></script>
 </head>
 <body>
-  <div id="loadingOverlay">
-    <div id="loadingSpinner"></div>
-    <div>Inicializando receptor...</div>
-  </div>
-  <video id="video" autoplay playsinline></video>
-  <div id="status">Cargando receptor...</div>
-  <div id="errorDisplay"></div>
+  <video id="video" autoplay playsinline controls crossorigin="anonymous"></video>
+  <div id="status">Cargando...</div>
   <script src="receiver.js"></script>
 </body>
 </html>
