@@ -6,7 +6,7 @@ options.disableIdleTimeout = true;
 options.maxInactivity = 3600;
 // Habilitar Shaka para HLS (opcional)
 options.useShakaForHls = true;
-options.shakaVersion = '4.15.9';
+options.shakaVersion = '4.9.2';
 options.playbackConfig = new cast.framework.PlaybackConfig();
 
 // Video de demostración de respaldo
