@@ -43,13 +43,29 @@
       width:100%; 
       height:100%; 
       background:black; 
+      position: relative;
+      z-index: 1;
     }
     .error-hidden {
       display: none !important;
     }
+    #loadingOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 20;
+      font-size: 1.5em;
+    }
   </style>
 </head>
 <body>
+  <div id="loadingOverlay">Inicializando receptor...</div>
   <video id="video" autoplay></video>
   <div id="status">Cargando receptor...</div>
   <div id="errorDisplay"></div>
