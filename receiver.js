@@ -3,34 +3,21 @@ const playerManager = context.getPlayerManager();
 
 const options = new cast.framework.CastReceiverOptions();
 options.disableIdleTimeout = true;
-
-// ✅ Para HLS
 options.useShakaForHls = true;
-options.shakaVersion = '4.9.2';
+// 👉 probá SIN fijar shakaVersion al inicio (a veces rompe si no coincide)
+// options.shakaVersion = '4.9.2';
 
-// ✅ PlaybackConfig
-options.playbackConfig = new cast.framework.PlaybackConfig();
-
-
-// PlaybackConfig para requests (manifest/segment/license)
 const playbackConfig = new cast.framework.PlaybackConfig();
 
-/**
- * helper: aplica headers “permitidos” desde customData
- * OJO: User-Agent/Referer suelen ser forbidden en runtime web.
- */
 function applyHeadersFromCustomData(requestInfo, cdHeaders) {
   if (!cdHeaders) return requestInfo;
-
   requestInfo.headers = requestInfo.headers || {};
 
   for (const [k, v] of Object.entries(cdHeaders)) {
     if (!v) continue;
-
-    // Evitar setear headers típicamente forbidden (mejor no arriesgar)
     const key = String(k).toLowerCase();
+    // Forbidden headers en entorno web
     if (key === "user-agent" || key === "referer") continue;
-
     requestInfo.headers[k] = v;
   }
   return requestInfo;
@@ -49,11 +36,17 @@ playerManager.setMessageInterceptor(
     }
 
     const cd = media.customData || {};
-    if (cd.url) media.contentUrl = cd.url;
+    const url = cd.url || cd.contentUrl;
+
+    if (url) {
+      media.contentId = url;     // ✅ estándar
+      media.contentUrl = url;    // ✅ compat
+    }
     if (cd.contentType) media.contentType = cd.contentType;
 
-    document.getElementById("status").innerText =
-      `LOAD: ${media.contentUrl || "sin url"}`;
+    console.log("LOAD url=", url, "type=", media.contentType, "cd=", cd);
+    const s = document.getElementById("status");
+    if (s) s.innerText = `LOAD: ${url || "sin url"}`;
 
     return loadRequestData;
   }
@@ -61,17 +54,16 @@ playerManager.setMessageInterceptor(
 
 playerManager.setMediaPlaybackInfoHandler((loadRequestData, cfg) => {
   const cd = (loadRequestData.media && loadRequestData.media.customData) || {};
+  const h = cd.headers || null;
 
-  // headers por tipo
-  const manifestHeaders = cd.manifestHeaders || cd.headers || null;
-  const segmentHeaders  = cd.segmentHeaders  || cd.headers || null;
-  const licenseHeaders  = cd.licenseHeaders  || cd.headers || null;
+  const manifestHeaders = cd.manifestHeaders || h;
+  const segmentHeaders  = cd.segmentHeaders  || h;
+  const licenseHeaders  = cd.licenseHeaders  || h;
 
-  cfg.manifestRequestHandler = (requestInfo) => applyHeadersFromCustomData(requestInfo, manifestHeaders);
-  cfg.segmentRequestHandler  = (requestInfo) => applyHeadersFromCustomData(requestInfo, segmentHeaders);
-  cfg.licenseRequestHandler  = (requestInfo) => applyHeadersFromCustomData(requestInfo, licenseHeaders);
+  cfg.manifestRequestHandler = (ri) => applyHeadersFromCustomData(ri, manifestHeaders);
+  cfg.segmentRequestHandler  = (ri) => applyHeadersFromCustomData(ri, segmentHeaders);
+  cfg.licenseRequestHandler  = (ri) => applyHeadersFromCustomData(ri, licenseHeaders);
 
-  // DRM opcional (si algún día lo usás)
   if (cd.licenseUrl) {
     cfg.licenseUrl = cd.licenseUrl;
     cfg.protectionSystem =
@@ -83,17 +75,21 @@ playerManager.setMediaPlaybackInfoHandler((loadRequestData, cfg) => {
   return cfg;
 });
 
+playerManager.addEventListener(cast.framework.events.EventType.ERROR, (e) => {
+  console.log("PLAYER ERROR:", e);
+  const s = document.getElementById("status");
+  if (s) s.innerText = "Error (ver consola)";
+});
+
 playerManager.addEventListener(
   cast.framework.events.EventType.MEDIA_STATUS,
   (event) => {
-    const state = event.mediaStatus && event.mediaStatus.playerState;
-    if (state) document.getElementById("status").innerText = `Estado: ${state}`;
+    const st = event.mediaStatus;
+    const state = st && st.playerState;
+    console.log("MEDIA_STATUS:", st);
+    const s = document.getElementById("status");
+    if (s && state) s.innerText = `Estado: ${state}`;
   }
-);
-
-playerManager.addEventListener(
-  cast.framework.events.EventType.ERROR,
-  () => (document.getElementById("status").innerText = "Error")
 );
 
 options.playbackConfig = playbackConfig;
