@@ -4,6 +4,14 @@ const playerManager = context.getPlayerManager();
 const options = new cast.framework.CastReceiverOptions();
 options.disableIdleTimeout = true;
 
+// ✅ Para HLS
+options.useShakaForHls = true;
+options.shakaVersion = '4.9.2';
+
+// ✅ PlaybackConfig
+options.playbackConfig = new cast.framework.PlaybackConfig();
+
+
 // PlaybackConfig para requests (manifest/segment/license)
 const playbackConfig = new cast.framework.PlaybackConfig();
 
