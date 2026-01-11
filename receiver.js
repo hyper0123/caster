@@ -1,92 +1,93 @@
 const context = cast.framework.CastReceiverContext.getInstance();
 const playerManager = context.getPlayerManager();
+
 const options = new cast.framework.CastReceiverOptions();
-// Opciones generales
 options.disableIdleTimeout = true;
-options.maxInactivity = 3600;
-// Habilitar Shaka para HLS (opcional)
-options.useShakaForHls = true;
-options.shakaVersion = '4.9.2';
-options.playbackConfig = new cast.framework.PlaybackConfig();
 
-// Video de demostración de respaldo
-const fallbackURL = 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+// PlaybackConfig para requests (manifest/segment/license)
+const playbackConfig = new cast.framework.PlaybackConfig();
 
-// Interceptar LOAD para usar customData y fallback
+/**
+ * helper: aplica headers “permitidos” desde customData
+ * OJO: User-Agent/Referer suelen ser forbidden en runtime web.
+ */
+function applyHeadersFromCustomData(requestInfo, cdHeaders) {
+  if (!cdHeaders) return requestInfo;
+
+  requestInfo.headers = requestInfo.headers || {};
+
+  for (const [k, v] of Object.entries(cdHeaders)) {
+    if (!v) continue;
+
+    // Evitar setear headers típicamente forbidden (mejor no arriesgar)
+    const key = String(k).toLowerCase();
+    if (key === "user-agent" || key === "referer") continue;
+
+    requestInfo.headers[k] = v;
+  }
+  return requestInfo;
+}
+
 playerManager.setMessageInterceptor(
-  cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
+  cast.framework.messages.MessageType.LOAD,
+  (loadRequestData) => {
     const media = loadRequestData.media;
     if (!media) {
-      const error = new cast.framework.messages.ErrorData(
+      const err = new cast.framework.messages.ErrorData(
         cast.framework.messages.ErrorType.LOAD_FAILED
       );
-      error.reason = cast.framework.messages.ErrorReason.INVALID_PARAM;
-      return error;
+      err.reason = cast.framework.messages.ErrorReason.INVALID_PARAM;
+      return err;
     }
-    if (media.customData) {
-      const cd = media.customData;
-      // Asignar URL y tipo desde customData (por ejemplo 'url' o 'contentUrl')
-      if (cd.url) media.contentUrl = cd.url;
-      else if (cd.contentUrl) media.contentUrl = cd.contentUrl;
-      if (cd.contentType) media.contentType = cd.contentType;
-    }
-    // Lógica de fallback: si no hay URL válida, usar video de demostración
-    if (!media.contentUrl) {
-      media.contentUrl = fallbackURL;
-      media.contentType = 'video/mp4';
-    }
-    document.getElementById('status').innerText = 'Video recibido';
+
+    const cd = media.customData || {};
+    if (cd.url) media.contentUrl = cd.url;
+    if (cd.contentType) media.contentType = cd.contentType;
+
+    document.getElementById("status").innerText =
+      `LOAD: ${media.contentUrl || "sin url"}`;
+
     return loadRequestData;
   }
 );
 
-// Configurar DRM y cabeceras adicionales según customData
-playerManager.setMediaPlaybackInfoHandler((loadRequestData, playbackConfig) => {
-  const cd = loadRequestData.media.customData;
-  if (cd) {
-    if (cd.licenseUrl) {
-      playbackConfig.licenseUrl = cd.licenseUrl;
-      // Determinar tipo de DRM: Widevine o ClearKey
-      playbackConfig.protectionSystem = (
-        cd.licenseType === 'clearKey' ?
-        cast.framework.ContentProtection.CLEARKEY :
-        cast.framework.ContentProtection.WIDEVINE
-      );
-    }
-    if (cd.licenseHeaders) {
-      playbackConfig.licenseRequestHandler = (requestInfo) => {
-        requestInfo.headers = cd.licenseHeaders;
-        return requestInfo;
-      };
-    }
-    if (cd.manifestHeaders) {
-      playbackConfig.manifestRequestHandler = (requestInfo) => {
-        requestInfo.headers = cd.manifestHeaders;
-      };
-    }
-    if (cd.segmentHeaders) {
-      playbackConfig.segmentRequestHandler = (requestInfo) => {
-        requestInfo.headers = cd.segmentHeaders;
-      };
-    }
+playerManager.setMediaPlaybackInfoHandler((loadRequestData, cfg) => {
+  const cd = (loadRequestData.media && loadRequestData.media.customData) || {};
+
+  // headers por tipo
+  const manifestHeaders = cd.manifestHeaders || cd.headers || null;
+  const segmentHeaders  = cd.segmentHeaders  || cd.headers || null;
+  const licenseHeaders  = cd.licenseHeaders  || cd.headers || null;
+
+  cfg.manifestRequestHandler = (requestInfo) => applyHeadersFromCustomData(requestInfo, manifestHeaders);
+  cfg.segmentRequestHandler  = (requestInfo) => applyHeadersFromCustomData(requestInfo, segmentHeaders);
+  cfg.licenseRequestHandler  = (requestInfo) => applyHeadersFromCustomData(requestInfo, licenseHeaders);
+
+  // DRM opcional (si algún día lo usás)
+  if (cd.licenseUrl) {
+    cfg.licenseUrl = cd.licenseUrl;
+    cfg.protectionSystem =
+      cd.licenseType === "clearKey"
+        ? cast.framework.ContentProtection.CLEARKEY
+        : cast.framework.ContentProtection.WIDEVINE;
   }
-  return playbackConfig;
+
+  return cfg;
 });
 
-// Mostrar estados en pantalla
 playerManager.addEventListener(
-  cast.framework.events.EventType.MEDIA_STATUS, (event) => {
-    const state = event.mediaStatus.playerState;
-    if (state === 'PLAYING') {
-      document.getElementById('status').innerText = 'Reproduciendo';
-    }
-  }
-);
-playerManager.addEventListener(
-  cast.framework.events.EventType.ERROR, (event) => {
-    document.getElementById('status').innerText = 'Error de carga';
+  cast.framework.events.EventType.MEDIA_STATUS,
+  (event) => {
+    const state = event.mediaStatus && event.mediaStatus.playerState;
+    if (state) document.getElementById("status").innerText = `Estado: ${state}`;
   }
 );
 
-// Iniciar el contexto con las opciones configuradas
+playerManager.addEventListener(
+  cast.framework.events.EventType.ERROR,
+  () => (document.getElementById("status").innerText = "Error")
+);
+
+options.playbackConfig = playbackConfig;
 context.start(options);
+
